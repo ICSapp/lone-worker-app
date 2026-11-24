@@ -1,0 +1,21 @@
+# Render "Blueprint": tells Render how to run this app.
+# A paid instance is needed so the app never goes to sleep (it must keep
+# watching for missed check-ins) and so data is kept on a permanent disk.
+services:
+  - type: web
+    name: lone-worker-safety
+    runtime: node
+    plan: starter
+    region: frankfurt # EU data centre (no UK region on Render)
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/setup-status
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_FILE
+        value: /var/data/db.json
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
