@@ -1,0 +1,418 @@
+// Manager / office dashboard.
+'use strict';
+
+const app = document.getElementById('app');
+const tabsEl = document.getElementById('tabs');
+const STATUS_TEXT = {
+  sos: 'SOS',
+  overdue: 'Missed check-in',
+  late: 'Check-in late',
+  due_soon: 'Due soon',
+  ok: 'OK',
+};
+const ui = { tab: 'live', me: null, dash: null, seenAlerts: new Set(), pollTimer: null, firstLoad: true };
+
+function setScreen(...nodes) { app.replaceChildren(...nodes); }
+
+// ------------------------------------------------------------------- sound
+
+let audioCtx = null;
+function alarm() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const t = audioCtx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.frequency.value = i % 2 ? 660 : 880;
+      g.gain.setValueAtTime(0.25, t + i * 0.35);
+      g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.35 + 0.3);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t + i * 0.35);
+      o.stop(t + i * 0.35 + 0.3);
+    }
+  } catch { /* no audio */ }
+}
+
+// ------------------------------------------------------------ setup/login
+
+async function renderAuth() {
+  tabsEl.classList.add('hidden');
+  document.getElementById('signout').classList.add('hidden');
+  let status = { needsSetup: false };
+  try { status = await api('GET', '/api/setup-status'); } catch { /* ignore */ }
+  const err = h('p', { class: 'error', role: 'alert' });
+  let form;
+  if (status.needsSetup) {
+    form = h('form', { class: 'card stack narrow' },
+      h('h1', {}, 'Set up your safety dashboard'),
+      h('p', {}, 'Create the first manager account. You can add engineers and other office staff afterwards.'),
+      h('label', {}, 'Company name', h('input', { name: 'orgName', placeholder: 'e.g. Smith Engineering Ltd' })),
+      h('label', {}, 'Your name', h('input', { name: 'name', required: true, autocomplete: 'name' })),
+      h('label', {}, 'Username', h('input', { name: 'username', required: true, autocapitalize: 'none', autocomplete: 'username' })),
+      h('label', {}, 'Password (8+ characters)', h('input', { name: 'password', type: 'password', minlength: 8, required: true, autocomplete: 'new-password' })),
+      err,
+      h('button', { class: 'btn primary big', type: 'submit' }, 'Create account'),
+    );
+  } else {
+    form = h('form', { class: 'card stack narrow' },
+      h('h1', {}, 'Dashboard sign in'),
+      h('label', {}, 'Username', h('input', { name: 'username', required: true, autocapitalize: 'none', autocomplete: 'username' })),
+      h('label', {}, 'Password', h('input', { name: 'password', type: 'password', required: true, autocomplete: 'current-password' })),
+      err,
+      h('button', { class: 'btn primary big', type: 'submit' }, 'Sign in'),
+      h('p', { class: 'muted small' }, 'Engineer? ', h('a', { href: '/' }, 'Open the engineer app')),
+    );
+  }
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    err.textContent = '';
+    const fd = Object.fromEntries(new FormData(form));
+    try {
+      const r = status.needsSetup
+        ? await api('POST', '/api/setup', fd)
+        : await api('POST', '/api/login', { username: fd.username, secret: fd.password });
+      if (r.user.role !== 'manager') { setToken(r.token); location.href = '/'; return; }
+      setToken(r.token);
+      await start();
+    } catch (ex) { err.textContent = ex.message; }
+  });
+  setScreen(form);
+}
+
+// --------------------------------------------------------------------- live
+
+function statusPill(st) {
+  return h('span', { class: 'pill ' + st }, STATUS_TEXT[st] || st);
+}
+
+function locLink(loc) {
+  if (!loc) return h('span', { class: 'muted' }, 'No location yet');
+  return h('span', {},
+    h('a', { href: mapUrl(loc), target: '_blank', rel: 'noopener' }, 'Open map'),
+    h('span', { class: 'muted' }, ` · ±${loc.accuracy ?? '?'} m · ${ago(loc.at)}`),
+  );
+}
+
+function ackForm(alert) {
+  const input = h('input', { placeholder: 'What did you do? e.g. Phoned, they are fine', maxlength: 500 });
+  const form = h('form', { class: 'ack' }, input, h('button', { class: 'btn primary', type: 'submit' }, 'Mark as dealt with'));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('POST', `/api/alerts/${alert.id}/ack`, { note: input.value });
+      toast('Alert closed.', 'good');
+      poll();
+    } catch (ex) { toast(ex.message, 'bad'); }
+  });
+  return form;
+}
+
+function renderLive() {
+  const d = ui.dash;
+  if (!d) return setScreen(h('p', { class: 'muted' }, 'Loading...'));
+  const phoneFor = (userId) => (ui.users || []).find((u) => u.id === userId)?.phone;
+
+  const alerts = d.openAlerts.length
+    ? h('section', { class: 'stack' },
+        d.openAlerts.map((a) => {
+          const sh = d.active.find((s) => s.id === a.shiftId);
+          const phone = phoneFor(a.userId);
+          return h('article', { class: 'alert-card ' + a.type, role: 'alert' },
+            h('div', { class: 'alert-head' },
+              h('strong', {}, a.type === 'sos' ? `SOS – ${a.workerName}` : `Missed check-in – ${a.workerName}`),
+              h('span', { class: 'muted' }, `${fmtTime(a.createdAt)} (${ago(a.createdAt)})${a.level >= 2 ? ' · escalated' : ''}`),
+            ),
+            sh ? h('p', {}, sh.locationNote ? `Site: ${sh.locationNote} · ` : '', locLink(sh.lastLocation)) : null,
+            a.note ? h('p', {}, `Note from engineer: ${a.note}`) : null,
+            phone ? h('p', {}, 'Call: ', h('a', { href: 'tel:' + phone }, phone)) : null,
+            h('p', { class: 'small muted' }, 'Try to reach them. If you cannot, follow your emergency procedure and call 999 if needed.'),
+            ackForm(a),
+          );
+        }),
+      )
+    : h('p', { class: 'allclear' }, 'No open alerts.');
+
+  const rows = d.active.map((s) => {
+    const left = Date.parse(s.nextDueAt) - Date.now();
+    return h('tr', { class: 'row-' + s.displayStatus },
+      h('td', {}, h('strong', {}, s.workerName)),
+      h('td', {}, statusPill(s.displayStatus)),
+      h('td', {}, s.locationNote || h('span', { class: 'muted' }, '-')),
+      h('td', {}, s.status === 'sos' ? '-' : h('span', { 'data-due': s.nextDueAt }, fmtCountdown(left)), h('div', { class: 'muted small' }, 'at ' + fmtTime(s.nextDueAt))),
+      h('td', {}, fmtTime(s.lastCheckinAt), h('div', { class: 'muted small' }, ago(s.lastCheckinAt))),
+      h('td', {}, locLink(s.lastLocation)),
+      h('td', {}, fmtTime(s.startedAt)),
+    );
+  });
+
+  setScreen(
+    h('h2', {}, 'Alerts'),
+    alerts,
+    h('h2', {}, `On shift now (${d.active.length})`),
+    d.active.length
+      ? h('div', { class: 'table-wrap' }, h('table', {},
+          h('thead', {}, h('tr', {}, ['Engineer', 'Status', 'Site', 'Next check-in', 'Last check-in', 'Location', 'Started'].map((t) => h('th', {}, t)))),
+          h('tbody', {}, rows),
+        ))
+      : h('p', { class: 'muted' }, 'Nobody is on a lone-working shift right now.'),
+    h('p', { class: 'muted small' }, `Updated ${fmtTime(d.serverTime)}. This page refreshes every few seconds. Keep it open in the office.`),
+  );
+}
+
+// Update countdowns every second without rebuilding the page.
+setInterval(() => {
+  document.querySelectorAll('[data-due]').forEach((el) => {
+    el.textContent = fmtCountdown(Date.parse(el.dataset.due) - Date.now());
+  });
+}, 1000);
+
+async function poll() {
+  try {
+    ui.dash = await api('GET', '/api/dashboard');
+    const fresh = ui.dash.openAlerts.filter((a) => !ui.seenAlerts.has(a.id));
+    fresh.forEach((a) => ui.seenAlerts.add(a.id));
+    if (fresh.length && !ui.firstLoad) {
+      alarm();
+      document.title = '⚠ ALERT – Safety Dashboard';
+    }
+    if (!ui.dash.openAlerts.length) document.title = 'Safety Dashboard';
+    ui.firstLoad = false;
+    if (ui.tab === 'live') {
+      // Don't wipe a note someone is typing.
+      const a = document.activeElement;
+      const typing = a && a.tagName === 'INPUT' && a.closest('.ack') && a.value;
+      if (!typing) renderLive();
+    }
+  } catch (ex) {
+    if (ex.status === 401 || ex.status === 403) { setToken(null); clearInterval(ui.pollTimer); renderAuth(); }
+    else toast(ex.message, 'bad');
+  }
+}
+
+// ------------------------------------------------------------------- people
+
+async function loadUsers() {
+  const r = await api('GET', '/api/users');
+  ui.users = r.users;
+}
+
+async function renderPeople() {
+  await loadUsers();
+  const err = h('p', { class: 'error', role: 'alert' });
+  const roleSel = h('select', { name: 'role' }, h('option', { value: 'worker' }, 'Engineer (uses the app on site)'), h('option', { value: 'manager' }, 'Office / manager (uses this dashboard)'));
+  const secretLabel = h('span', {}, 'PIN (4 to 8 digits)');
+  roleSel.addEventListener('change', () => { secretLabel.textContent = roleSel.value === 'worker' ? 'PIN (4 to 8 digits)' : 'Password (8+ characters)'; });
+  const form = h('form', { class: 'card grid-form' },
+    h('h3', { class: 'full' }, 'Add a person'),
+    h('label', {}, 'Name', h('input', { name: 'name', required: true })),
+    h('label', {}, 'Username', h('input', { name: 'username', required: true, autocapitalize: 'none' })),
+    h('label', {}, 'Mobile number', h('input', { name: 'phone', type: 'tel' })),
+    h('label', {}, 'Type', roleSel),
+    h('label', {}, secretLabel, h('input', { name: 'secret', type: 'password', required: true, autocomplete: 'new-password' })),
+    h('div', { class: 'full' }, err, h('button', { class: 'btn primary', type: 'submit' }, 'Add')),
+  );
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    err.textContent = '';
+    try {
+      await api('POST', '/api/users', Object.fromEntries(new FormData(form)));
+      toast('Added. Give them their username and PIN/password.', 'good');
+      renderPeople();
+    } catch (ex) { err.textContent = ex.message; }
+  });
+
+  const list = ui.users.filter((u) => u.active).map((u) => h('tr', {},
+    h('td', {}, h('strong', {}, u.name), u.id === ui.me.id ? h('span', { class: 'muted' }, ' (you)') : null),
+    h('td', {}, u.username),
+    h('td', {}, u.role === 'worker' ? 'Engineer' : 'Office / manager'),
+    h('td', {}, u.phone || h('span', { class: 'muted' }, '-')),
+    h('td', { class: 'actions' },
+      h('button', { class: 'btn small', type: 'button', onclick: () => resetSecret(u) }, u.role === 'worker' ? 'New PIN' : 'New password'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => exportUser(u) }, 'Download data'),
+      u.id !== ui.me.id ? h('button', { class: 'btn small danger', type: 'button', onclick: (e) => removeUser(u, e.currentTarget) }, 'Remove') : null,
+    ),
+  ));
+  const former = ui.users.filter((u) => !u.active).map((u) => h('li', {},
+    `${u.name} (${u.username}) `,
+    h('button', { class: 'btn small', type: 'button', onclick: () => exportUser(u) }, 'Download data'),
+    h('button', { class: 'btn small danger', type: 'button', onclick: (e) => eraseUser(u, e.currentTarget) }, 'Erase all their data'),
+  ));
+
+  setScreen(
+    h('h2', {}, 'Engineers & staff'),
+    form,
+    h('div', { class: 'table-wrap' }, h('table', {},
+      h('thead', {}, h('tr', {}, ['Name', 'Username', 'Type', 'Mobile', ''].map((t) => h('th', {}, t)))),
+      h('tbody', {}, list),
+    )),
+    former.length ? h('section', {}, h('h3', {}, 'Former staff'), h('p', { class: 'muted small' }, 'Under GDPR, delete their data once you no longer need it.'), h('ul', { class: 'plain-list' }, former)) : null,
+  );
+}
+
+function twoTap(btn, label, fn) {
+  if (btn.dataset.armed) return fn();
+  btn.dataset.armed = '1';
+  const old = btn.textContent;
+  btn.textContent = label;
+  setTimeout(() => { delete btn.dataset.armed; btn.textContent = old; }, 4000);
+}
+
+async function resetSecret(u) {
+  const isWorker = u.role === 'worker';
+  const secret = window.prompt(isWorker ? `New PIN for ${u.name} (4 to 8 digits)` : `New password for ${u.name} (8+ characters)`);
+  if (!secret) return;
+  try {
+    await api('POST', `/api/users/${u.id}/secret`, { secret });
+    toast('Updated. They will need to sign in again.', 'good');
+  } catch (ex) { toast(ex.message, 'bad'); }
+}
+
+function removeUser(u, btn) {
+  twoTap(btn, 'Tap again to remove', async () => {
+    try { await api('POST', `/api/users/${u.id}/deactivate`); toast(`${u.name} removed.`, 'good'); renderPeople(); } catch (ex) { toast(ex.message, 'bad'); }
+  });
+}
+
+function eraseUser(u, btn) {
+  twoTap(btn, 'Tap again: this cannot be undone', async () => {
+    try { await api('POST', `/api/users/${u.id}/erase`); toast('Data erased.', 'good'); renderPeople(); } catch (ex) { toast(ex.message, 'bad'); }
+  });
+}
+
+async function exportUser(u) {
+  try {
+    const data = await api('GET', `/api/users/${u.id}/export`);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = h('a', { href: URL.createObjectURL(blob), download: `${u.username}-data.json` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+  } catch (ex) { toast(ex.message, 'bad'); }
+}
+
+// ----------------------------------------------------------------- contacts
+
+async function renderContacts() {
+  const { contacts } = await api('GET', '/api/contacts');
+  const err = h('p', { class: 'error', role: 'alert' });
+  const form = h('form', { class: 'card grid-form' },
+    h('h3', { class: 'full' }, 'Add someone to alert'),
+    h('label', {}, 'Name', h('input', { name: 'name', required: true })),
+    h('label', {}, 'Mobile number', h('input', { name: 'phone', type: 'tel' })),
+    h('label', {}, 'Email', h('input', { name: 'email', type: 'email' })),
+    h('label', {}, 'Group', h('select', { name: 'group' }, h('option', { value: 'on-call' }, 'On-call'), h('option', { value: 'office' }, 'Office'))),
+    h('div', { class: 'full' }, err, h('button', { class: 'btn primary', type: 'submit' }, 'Add')),
+  );
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    err.textContent = '';
+    try { await api('POST', '/api/contacts', Object.fromEntries(new FormData(form))); renderContacts(); } catch (ex) { err.textContent = ex.message; }
+  });
+  setScreen(
+    h('h2', {}, 'Office & on-call contacts'),
+    h('p', {}, 'These people are told straight away when an engineer misses a check-in or presses SOS, and again if nobody marks the alert as dealt with. Dashboard users (office/managers) are alerted too.'),
+    h('p', { class: 'banner warn' }, 'Text messages and emails are not switched on yet. For now, alerts appear on this dashboard and under History → Messages. They will be sent for real once an SMS/email service is connected.'),
+    form,
+    contacts.length
+      ? h('div', { class: 'table-wrap' }, h('table', {},
+          h('thead', {}, h('tr', {}, ['Name', 'Group', 'Mobile', 'Email', ''].map((t) => h('th', {}, t)))),
+          h('tbody', {}, contacts.map((c) => h('tr', {},
+            h('td', {}, c.name), h('td', {}, c.group || 'on-call'), h('td', {}, c.phone || '-'), h('td', {}, c.email || '-'),
+            h('td', {}, h('button', { class: 'btn small danger', type: 'button', onclick: async () => { await api('DELETE', `/api/contacts/${c.id}`); renderContacts(); } }, 'Remove')),
+          ))),
+        ))
+      : h('p', { class: 'muted' }, 'No contacts added yet.'),
+  );
+}
+
+// ------------------------------------------------------------------ history
+
+const EVENT_TEXT = {
+  start: 'Started shift', checkin: 'Checked in', location: 'Location update', sos: 'SOS pressed',
+  missed: 'Missed check-in', escalated: 'Alert escalated', end: 'Ended shift', ack: 'Alert dealt with',
+};
+
+async function renderHistory() {
+  const d = await api('GET', '/api/dashboard');
+  const events = d.recentEvents.filter((e) => e.type !== 'location');
+  setScreen(
+    h('h2', {}, 'Recent activity'),
+    h('div', { class: 'table-wrap' }, h('table', {},
+      h('thead', {}, h('tr', {}, ['When', 'Engineer', 'What', 'Details'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, events.map((e) => h('tr', { class: ['sos', 'missed', 'escalated'].includes(e.type) ? 'row-overdue' : '' },
+        h('td', {}, fmtDateTime(e.at)), h('td', {}, e.workerName), h('td', {}, EVENT_TEXT[e.type] || e.type),
+        h('td', {}, e.note || '', e.location ? h('span', {}, ' ', h('a', { href: mapUrl(e.location), target: '_blank', rel: 'noopener' }, 'map')) : ''),
+      ))),
+    )),
+    h('h2', {}, 'Messages (not sent for real yet)'),
+    d.notifications.length
+      ? h('div', { class: 'table-wrap' }, h('table', {},
+          h('thead', {}, h('tr', {}, ['When', 'To', 'Subject', 'Message'].map((t) => h('th', {}, t)))),
+          h('tbody', {}, d.notifications.map((n) => h('tr', {}, h('td', {}, fmtDateTime(n.at)), h('td', {}, n.to), h('td', {}, n.subject), h('td', { class: 'small' }, n.body)))),
+        ))
+      : h('p', { class: 'muted' }, 'No messages yet.'),
+  );
+}
+
+// ----------------------------------------------------------------- settings
+
+async function renderSettings() {
+  const { settings: s } = await api('GET', '/api/settings');
+  const msg = h('p', { role: 'status' });
+  const intervals = [15, 30, 45, 60, 90, 120, 180, 240];
+  const form = h('form', { class: 'card grid-form' },
+    h('label', { class: 'full' }, 'Company name', h('input', { name: 'orgName', value: s.orgName })),
+    h('label', {}, 'Default check-in interval', h('select', { name: 'defaultIntervalMin' }, intervals.map((m) => h('option', { value: m, selected: m === s.defaultIntervalMin }, `${m} minutes`)))),
+    h('label', {}, 'Grace period after a missed check-in (minutes)', h('input', { name: 'graceMin', type: 'number', min: 1, max: 60, value: s.graceMin })),
+    h('label', {}, 'Escalate again if not dealt with after (minutes)', h('input', { name: 'escalateAfterMin', type: 'number', min: 1, max: 120, value: s.escalateAfterMin })),
+    h('label', {}, 'Delete location history after (days)', h('input', { name: 'retentionDays', type: 'number', min: 1, max: 365, value: s.retentionDays })),
+    h('div', { class: 'full' }, msg, h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
+  );
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api('PUT', '/api/settings', Object.fromEntries(new FormData(form)));
+      document.getElementById('org').textContent = r.settings.orgName;
+      toast('Saved.', 'good');
+    } catch (ex) { msg.textContent = ex.message; }
+  });
+  setScreen(h('h2', {}, 'Settings'), form);
+}
+
+// --------------------------------------------------------------------- tabs
+
+const RENDER = { live: renderLive, people: renderPeople, contacts: renderContacts, history: renderHistory, settings: renderSettings };
+
+tabsEl.addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-tab]');
+  if (!b) return;
+  ui.tab = b.dataset.tab;
+  tabsEl.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+  try { await RENDER[ui.tab](); } catch (ex) { toast(ex.message, 'bad'); }
+});
+
+document.getElementById('signout').addEventListener('click', async () => {
+  await api('POST', '/api/logout').catch(() => {});
+  setToken(null);
+  clearInterval(ui.pollTimer);
+  renderAuth();
+});
+
+async function start() {
+  const r = await api('GET', '/api/me');
+  if (r.user.role !== 'manager') { location.href = '/'; return; }
+  ui.me = r.user;
+  document.getElementById('org').textContent = r.orgName;
+  tabsEl.classList.remove('hidden');
+  document.getElementById('signout').classList.remove('hidden');
+  await loadUsers().catch(() => {});
+  await poll();
+  clearInterval(ui.pollTimer);
+  ui.pollTimer = setInterval(poll, 5000);
+}
+
+(async function boot() {
+  if (!getToken()) return renderAuth();
+  try { await start(); } catch { setToken(null); renderAuth(); }
+})();

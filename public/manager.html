@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f172a">
+  <title>Safety Dashboard</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="manager">
+  <header class="topbar">
+    <span class="brand"><img src="/icon.svg" alt="" width="26" height="26"> <span id="org">Safety Dashboard</span></span>
+    <nav id="tabs" class="tabs hidden" aria-label="Sections">
+      <button type="button" data-tab="live" class="active">Live</button>
+      <button type="button" data-tab="people">Engineers &amp; staff</button>
+      <button type="button" data-tab="contacts">Office &amp; on-call</button>
+      <button type="button" data-tab="history">History</button>
+      <button type="button" data-tab="settings">Settings</button>
+    </nav>
+    <button id="signout" class="link hidden" type="button">Sign out</button>
+  </header>
+  <main id="app" class="wrap wide"></main>
+  <script src="/common.js"></script>
+  <script src="/manager.js"></script>
+</body>
+</html>
