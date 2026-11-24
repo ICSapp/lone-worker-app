@@ -262,3 +262,40 @@ test('wellbeing can be skipped and switched off', async () => {
     assert.equal(st.body.enabled, false);
   });
 });
+
+test('wellbeing guidance levels follow the response procedure', () => {
+  const { assess } = require('../lib/wellbeing');
+  assert.equal(assess({ mood: 1, energy: 4 }).level, 'amber');
+  assert.equal(assess({ mood: 2, energy: 4 }).level, 'yellow');
+  assert.equal(assess({ mood: 2, energy: 2 }).level, 'amber');
+  assert.equal(assess({ mood: 5, energy: 1 }).level, 'amber');
+  assert.equal(assess({ mood: 5, energy: 1 }).fatigue, 'stand-down');
+  assert.equal(assess({ mood: 4, energy: 2 }).level, 'yellow');
+  assert.equal(assess({ mood: 4, energy: 2 }).fatigue, 'check');
+  assert.equal(assess({ mood: 3, energy: 3 }).level, 'green');
+  assert.equal(assess({ mood: 4, energy: 4, wantsChat: true }).level, 'yellow');
+  assert.equal(assess({ mood: 2, energy: 4, wantsChat: true }).level, 'amber');
+  assert.equal(assess({ mood: 2, energy: 4 }, { mood: 2, energy: 4 }).level, 'amber', 'low two weeks running goes up');
+  assert.equal(assess({ mood: 3, energy: 4 }, { mood: 5, energy: 4 }).level, 'yellow', 'big drop goes up');
+});
+
+test('wellbeing: comment with good scores reaches the office, skips are shown', async () => {
+  await withServer(async ({ app, call }) => {
+    const { mt, wt } = await setup(call);
+    await call('POST', '/api/wellbeing', { skip: true }, wt);
+    let ov = await call('GET', '/api/wellbeing', null, mt);
+    assert.equal(ov.body.people[0].thisWeek, 'skipped');
+    assert.equal(ov.body.people[0].skipStreak, 1);
+
+    const r = await call('POST', '/api/wellbeing', { mood: 4, energy: 4, comment: 'Site in Leeds has no welfare facilities' }, wt);
+    assert.equal(r.body.flagged, true);
+    assert.equal(r.body.level, 'green');
+    const n = app.store.db.notifications.find((x) => x.subject === 'Wellbeing check-in');
+    assert.ok(n.body.includes('left a comment'));
+    assert.ok(!n.body.includes('Leeds'), 'comment kept out of the notification');
+    ov = await call('GET', '/api/wellbeing', null, mt);
+    assert.equal(ov.body.needsFollowUp.length, 1);
+    assert.equal(ov.body.people[0].thisWeek, 'answered');
+    assert.equal(ov.body.people[0].skipStreak, 0);
+  });
+});

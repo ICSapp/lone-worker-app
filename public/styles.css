@@ -181,3 +181,14 @@ textarea { font: inherit; padding: .6rem .8rem; border-radius: 10px; border: 1px
 .wb-4, .wb-5 { background: var(--go); }
 .wb-card { border-radius: var(--radius); padding: 1rem; background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
 .wb-card p { margin: .35rem 0; }
+.wb-card.wb-level-amber { background: var(--bad-bg); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.wb-card.wb-level-green { background: var(--card); border-color: color-mix(in srgb, var(--go) 45%, transparent); }
+.wb-badge { display: inline-block; padding: .15rem .55rem; border-radius: 999px; font-weight: 700; font-size: .85rem; color: #fff; }
+.wb-badge-amber { background: #b91c1c; }
+.wb-badge-yellow { background: #b45309; }
+.wb-badge-green { background: #15803d; }
+.wb-guide { margin: .5rem 0; }
+.wb-guide summary { cursor: pointer; font-weight: 600; }
+.wb-guide ul { margin: .4rem 0; padding-left: 1.2rem; }
+.wb-guide li { margin: .25rem 0; }
+.wb-urgent { font-weight: 600; color: var(--bad); }
