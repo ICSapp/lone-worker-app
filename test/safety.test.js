@@ -163,3 +163,55 @@ test('static files are served and path traversal is blocked', async () => {
     assert.notEqual(evil.status, 200);
   });
 });
+
+test('dashboard users with alerts turned on get a phone notification on missed check-in', async () => {
+  const sent = [];
+  const pushSend = async (sub, body) => { sent.push({ endpoint: sub.endpoint, body: JSON.parse(body) }); };
+  const app = createApp({ log: quiet, pushSend });
+  await new Promise((r) => app.server.listen(0, r));
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const call = async (method, path, body, token) => {
+    const res = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: res.status, body: await res.json() };
+  };
+  try {
+    const { mt, wt } = await setup(call);
+    const key = await call('GET', '/api/push/key');
+    assert.ok(key.body.publicKey.length > 40);
+    const sub = { endpoint: 'https://push.example.com/abc', keys: { p256dh: 'p', auth: 'a' } };
+    const bad = await call('POST', '/api/push/subscribe', { subscription: sub }, wt);
+    assert.equal(bad.status, 403, 'engineers cannot subscribe');
+    const ok = await call('POST', '/api/push/subscribe', { subscription: sub, label: 'iPhone' }, mt);
+    assert.equal(ok.status, 200);
+    const test1 = await call('POST', '/api/push/test', null, mt);
+    assert.equal(test1.body.sent, 1);
+
+    await call('POST', '/api/consent', null, wt);
+    await call('POST', '/api/shift/start', { intervalMin: 60 }, wt);
+    const shift = app.store.db.shifts[0];
+    app.safety.tick(Date.parse(shift.nextDueAt) + 6 * MIN);
+    await new Promise((r) => setTimeout(r, 20));
+    const alert = sent.find((s) => s.body.title === 'Missed check-in');
+    assert.ok(alert, 'push sent for missed check-in');
+    const rec = app.store.db.notifications.find((n) => n.channel === 'push');
+    assert.equal(rec.delivered, true);
+
+    const users = await call('GET', '/api/users', null, mt);
+    assert.equal(users.body.users.find((u) => u.username === 'olivia').alertDevices, 1);
+    assert.ok(!JSON.stringify(users.body).includes('push.example.com'), 'device details not exposed');
+  } finally {
+    app.server.close();
+  }
+});
+
+test('a device that has gone away is forgotten', async () => {
+  const pushSend = async () => { const e = new Error('gone'); e.statusCode = 410; throw e; };
+  const app = createApp({ log: quiet, pushSend });
+  const user = { id: 'u1', name: 'X', role: 'manager', active: true, pushSubs: [{ endpoint: 'https://push.example.com/x', keys: { p256dh: 'p', auth: 'a' } }] };
+  app.store.db.users.push(user);
+  const { createPush } = require('../lib/push');
+  const push = createPush(app.store, { log: quiet, send: pushSend });
+  const n = await push.sendToUser(user, { title: 't' });
+  assert.equal(n, 0);
+  assert.equal(user.pushSubs.length, 0);
+});

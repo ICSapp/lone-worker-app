@@ -1,8 +1,8 @@
 // Service worker: lets the app be "installed" on a phone home screen and
 // load its screens quickly. Safety data (check-ins, SOS) always goes live to
 // the server and is never cached.
-const CACHE = 'lws-v1';
-const SHELL = ['/', '/index.html', '/manager.html', '/styles.css', '/common.js', '/worker.js', '/manager.js', '/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'lws-v2';
+const SHELL = ['/', '/index.html', '/manager.html', '/styles.css', '/common.js', '/worker.js', '/manager.js', '/icon.svg', '/manifest.webmanifest', '/manager.webmanifest'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -27,7 +27,31 @@ self.addEventListener('fetch', (e) => {
   );
 });
 
+// Alert sent from the server (missed check-in, SOS, escalation).
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = { title: 'Safety alert', body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(data.title || 'Safety alert', {
+    body: data.body || 'Open the dashboard.',
+    icon: '/icon.svg',
+    badge: '/icon.svg',
+    tag: data.alertId || 'safety-alert',
+    renotify: true,
+    requireInteraction: true,
+    vibrate: [400, 200, 400, 200, 400],
+    data: { url: data.url || '/manager' },
+  }));
+});
+
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  e.waitUntil(self.clients.matchAll({ type: 'window' }).then((list) => (list[0] ? list[0].focus() : self.clients.openWindow('/'))));
+  const url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    const existing = list.find((c) => new URL(c.url).pathname === url) || list[0];
+    if (existing) {
+      if (new URL(existing.url).pathname !== url && existing.navigate) existing.navigate(url);
+      return existing.focus();
+    }
+    return self.clients.openWindow(url);
+  }));
 });

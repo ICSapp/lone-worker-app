@@ -1,0 +1,19 @@
+{
+  "name": "Safety Dashboard",
+  "short_name": "Dashboard",
+  "description": "Office and on-call dashboard for lone worker alerts.",
+  "start_url": "/manager",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "id": "/manager"
+}

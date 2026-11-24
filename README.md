@@ -27,7 +27,7 @@ It is a web app, so it works on any phone (iPhone or Android) through the browse
 1. Go to the app link with `/manager` on the end (for example `https://your-app-address/manager`).
 2. The very first time, create the main manager account.
 3. **Engineers & staff** tab: add each engineer with a username and a 4 to 8 digit PIN. Add office colleagues as "Office / manager" so they can use the dashboard too.
-4. **Office & on-call** tab: add the people who should be alerted (phone and/or email).
+4. Give office and on-call staff their own "Office / manager" login, and have each of them tap **Turn on alerts** on their phone (see below).
 5. **Live** tab: keep this open in the office. It refreshes itself and beeps when a new alert arrives.
 6. When an alert comes in, phone the engineer, then type what you did and press **Mark as dealt with**.
 
@@ -47,7 +47,7 @@ All of these times can be changed in the **Settings** tab.
 
 ## What is not finished yet (needs your accounts)
 
-1. **Text messages / emails are not actually sent yet.** Alerts appear on the dashboard (with a sound) and every message that *would* be sent is listed under **History → Messages**. To send real texts, sign up to an SMS service such as **Twilio** (pay-as-you-go, roughly 4p per UK text). The code to connect it goes in `lib/notify.js`.
+1. **Phone alerts (free) are built in. Text messages are not switched on yet.** Give each office and on-call person a dashboard login ("Office / manager"). They open the dashboard on their phone, add it to the home screen, and tap **Turn on alerts**. Missed check-ins and SOS then pop up as notifications even when the dashboard is closed. iPhones need iOS 16.4 or newer and must open the dashboard from the home screen. Contacts on the *Office & on-call* tab without a login would need text messages, which require an SMS service such as **Twilio** (about 4p per UK text). The code to connect it goes in `lib/notify.js`.
 2. **Hosting.** The app needs to run on a server with a web address (with `https://`, which phones require for location). Low-cost options include Render, Railway or Fly.io (a few pounds a month). Phones cannot use it until it is hosted.
 3. **Phone in pocket / screen locked.** A web app cannot keep running in the background when the phone is locked, so location only updates while the app is open. **Missed check-ins are still detected**, because the server is watching the clock, not the phone. If you later need background tracking or "man down" fall detection, that needs a proper app-store app.
 
@@ -76,7 +76,7 @@ This is general guidance, not legal advice.
 
 ## For developers
 
-No external packages are needed. You need Node.js 20 or newer.
+You need Node.js 20 or newer. Run `npm install` once (one package: `web-push`).
 
 ```bash
 npm start          # runs on http://localhost:3000 (dashboard at /manager)
@@ -93,7 +93,8 @@ Settings via environment variables:
 Layout:
 - `server.js` – web server and API
 - `lib/safety.js` – shift, check-in, SOS, missed check-in and escalation rules
-- `lib/notify.js` – sending alerts (stubbed: plug in SMS/email here)
+- `lib/notify.js` – sending alerts (phone notifications; SMS is stubbed, plug it in here)
+- `lib/push.js` – phone/tablet notifications (web push; keys are created automatically)
 - `lib/auth.js` – sign-in, PIN/password hashing
 - `lib/store.js` – simple JSON file storage (move to a real database as you grow)
 - `public/` – the engineer app (`index.html`, `worker.js`) and office dashboard (`manager.html`, `manager.js`)

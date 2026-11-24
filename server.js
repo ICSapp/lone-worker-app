@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { Store } = require('./lib/store');
 const { createNotifier } = require('./lib/notify');
+const { createPush } = require('./lib/push');
 const { createSafety, SafetyError } = require('./lib/safety');
 const auth = require('./lib/auth');
 
@@ -22,9 +23,10 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
-function createApp({ dataFile, log = console.log } = {}) {
+function createApp({ dataFile, log = console.log, pushSend } = {}) {
   const store = new Store(dataFile);
-  const notify = createNotifier(store, { log });
+  const push = createPush(store, { log, ...(pushSend ? { send: pushSend } : {}) });
+  const notify = createNotifier(store, { log, push });
   const safety = createSafety(store, notify);
 
   function send(res, status, body) {
@@ -139,6 +141,28 @@ function createApp({ dataFile, log = console.log } = {}) {
     ['GET', '/api/me', ({ user }) => {
       requireRole(user);
       return { user: auth.publicUser(user), orgName: store.db.settings.orgName };
+    }],
+
+    // ---- phone/tablet notifications for dashboard users ----
+    ['GET', '/api/push/key', () => ({ publicKey: push.publicKey })],
+
+    ['POST', '/api/push/subscribe', ({ user, body }) => {
+      requireRole(user, 'manager');
+      if (!push.subscribe(user, body.subscription, body.label)) throw new SafetyError('This device could not be set up for alerts.');
+      return { ok: true, devices: user.pushSubs.length };
+    }],
+
+    ['POST', '/api/push/unsubscribe', ({ user, body }) => {
+      requireRole(user, 'manager');
+      push.unsubscribe(user, String(body.endpoint || ''));
+      return { ok: true };
+    }],
+
+    ['POST', '/api/push/test', async ({ user }) => {
+      requireRole(user, 'manager');
+      const sent = await push.sendToUser(user, { title: 'Test alert', body: 'Alerts are working on this device.', url: '/manager' });
+      if (!sent) throw new SafetyError('Could not send to this device. Try turning alerts off and on again.');
+      return { sent };
     }],
 
     // ---- worker ----

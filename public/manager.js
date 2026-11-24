@@ -80,6 +80,109 @@ async function renderAuth() {
   setScreen(form);
 }
 
+// ------------------------------------------------- alerts on this device
+
+function b64ToBytes(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+function deviceLabel() {
+  const ua = navigator.userAgent;
+  if (/iPad|Macintosh/.test(ua) && 'ontouchend' in document) return 'iPad';
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Windows/.test(ua)) return 'Windows computer';
+  if (/Mac/.test(ua)) return 'Mac';
+  return 'Device';
+}
+
+const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+ui.pushCard = h('section', { class: 'push-card' });
+
+async function currentSubscription() {
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function refreshPushCard() {
+  const card = ui.pushCard;
+  const set = (...nodes) => card.replaceChildren(...nodes);
+  if (isIos() && !isStandalone()) {
+    card.className = 'push-card off';
+    return set(
+      h('strong', {}, 'Get alerts on this ' + deviceLabel()),
+      h('p', {}, 'Tap the Share button, then "Add to Home Screen". Open the dashboard from your home screen, sign in, and tap "Turn on alerts" there.'),
+    );
+  }
+  if (!pushSupported()) {
+    card.className = 'push-card off';
+    return set(h('strong', {}, 'This browser cannot show alerts.'), h('p', {}, 'Use Chrome, Edge, Firefox or Safari (on iPhone, add to home screen first).'));
+  }
+  if (Notification.permission === 'denied') {
+    card.className = 'push-card off';
+    return set(h('strong', {}, 'Alerts are blocked on this device.'), h('p', {}, 'Allow notifications for this site in your browser or phone settings, then reload this page.'));
+  }
+  let sub = null;
+  try { sub = await currentSubscription(); } catch { /* ignore */ }
+  if (sub && Notification.permission === 'granted') {
+    // Make sure the server knows about it (e.g. after signing in again).
+    api('POST', '/api/push/subscribe', { subscription: sub.toJSON(), label: deviceLabel() }).catch(() => {});
+    card.className = 'push-card on';
+    return set(
+      h('span', {}, h('strong', {}, '\u2713 Alerts are on for this ' + deviceLabel()), h('span', { class: 'muted' }, ' \u2013 you\u2019ll be notified of missed check-ins and SOS even when this page is closed.')),
+      h('span', { class: 'push-actions' },
+        h('button', { class: 'btn small', type: 'button', onclick: testPush }, 'Send a test'),
+        h('button', { class: 'btn small', type: 'button', onclick: disablePush }, 'Turn off'),
+      ),
+    );
+  }
+  card.className = 'push-card off';
+  return set(
+    h('span', {}, h('strong', {}, 'Alerts are off on this ' + deviceLabel() + '.'), ' Turn them on to be notified of missed check-ins and SOS when this page is closed.'),
+    h('button', { class: 'btn primary', type: 'button', onclick: enablePush }, 'Turn on alerts'),
+  );
+}
+
+async function enablePush() {
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('Alerts were not allowed.', 'bad'); return refreshPushCard(); }
+    const { publicKey } = await api('GET', '/api/push/key');
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
+    await api('POST', '/api/push/subscribe', { subscription: sub.toJSON(), label: deviceLabel() });
+    toast('Alerts turned on.', 'good');
+  } catch (ex) {
+    toast(ex.message || 'Could not turn on alerts.', 'bad');
+  }
+  refreshPushCard();
+}
+
+async function disablePush() {
+  try {
+    const sub = await currentSubscription();
+    if (sub) {
+      await api('POST', '/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {});
+      await sub.unsubscribe();
+    }
+    toast('Alerts turned off on this device.');
+  } catch (ex) { toast(ex.message, 'bad'); }
+  refreshPushCard();
+}
+
+async function testPush() {
+  try {
+    await api('POST', '/api/push/test');
+    toast('Test sent. It should pop up in a few seconds.', 'good');
+  } catch (ex) { toast(ex.message, 'bad'); }
+}
+
 // --------------------------------------------------------------------- live
 
 function statusPill(st) {
@@ -147,6 +250,7 @@ function renderLive() {
   });
 
   setScreen(
+    ui.pushCard,
     h('h2', {}, 'Alerts'),
     alerts,
     h('h2', {}, `On shift now (${d.active.length})`),
@@ -227,6 +331,7 @@ async function renderPeople() {
     h('td', {}, u.username),
     h('td', {}, u.role === 'worker' ? 'Engineer' : 'Office / manager'),
     h('td', {}, u.phone || h('span', { class: 'muted' }, '-')),
+    h('td', {}, u.role === 'worker' ? h('span', { class: 'muted' }, '-') : u.alertDevices ? `On (${u.alertDevices} device${u.alertDevices > 1 ? 's' : ''})` : h('span', { class: 'warn-text' }, 'Not turned on')),
     h('td', { class: 'actions' },
       h('button', { class: 'btn small', type: 'button', onclick: () => resetSecret(u) }, u.role === 'worker' ? 'New PIN' : 'New password'),
       h('button', { class: 'btn small', type: 'button', onclick: () => exportUser(u) }, 'Download data'),
@@ -243,7 +348,7 @@ async function renderPeople() {
     h('h2', {}, 'Engineers & staff'),
     form,
     h('div', { class: 'table-wrap' }, h('table', {},
-      h('thead', {}, h('tr', {}, ['Name', 'Username', 'Type', 'Phone', ''].map((t) => h('th', {}, t)))),
+      h('thead', {}, h('tr', {}, ['Name', 'Username', 'Type', 'Phone', 'Phone alerts', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, list),
     )),
     former.length ? h('section', {}, h('h3', {}, 'Former staff'), h('p', { class: 'muted small' }, 'Under GDPR, delete their data once you no longer need it.'), h('ul', { class: 'plain-list' }, former)) : null,
@@ -311,8 +416,8 @@ async function renderContacts() {
   });
   setScreen(
     h('h2', {}, 'Office & on-call contacts'),
-    h('p', {}, 'These people are told straight away when an engineer misses a check-in or presses SOS, and again if nobody marks the alert as dealt with. Dashboard users (office/managers) are alerted too.'),
-    h('p', { class: 'banner warn' }, 'Text messages and emails are not switched on yet. For now, alerts appear on this dashboard and under History → Messages. They will be sent for real once an SMS/email service is connected.'),
+    h('p', {}, h('strong', {}, 'Best option: phone notifications (free). '), 'Give each office and on-call person their own login on the Engineers & staff tab (type "Office / manager"). They sign in to the dashboard on their phone and tap "Turn on alerts". They are then notified straight away of missed check-ins and SOS.'),
+    h('p', { class: 'banner warn' }, 'Text messages are not switched on yet. People added below (without a login) will only get alerts once a text message service is connected. Until then, what would have been sent is listed under History \u2192 Messages.'),
     form,
     contacts.length
       ? h('div', { class: 'table-wrap' }, h('table', {},
@@ -345,11 +450,11 @@ async function renderHistory() {
         h('td', {}, e.note || '', e.location ? h('span', {}, ' ', h('a', { href: mapUrl(e.location), target: '_blank', rel: 'noopener' }, 'map')) : ''),
       ))),
     )),
-    h('h2', {}, 'Messages (not sent for real yet)'),
+    h('h2', {}, 'Alerts sent'),
     d.notifications.length
       ? h('div', { class: 'table-wrap' }, h('table', {},
-          h('thead', {}, h('tr', {}, ['When', 'To', 'Subject', 'Message'].map((t) => h('th', {}, t)))),
-          h('tbody', {}, d.notifications.map((n) => h('tr', {}, h('td', {}, fmtDateTime(n.at)), h('td', {}, n.to), h('td', {}, n.subject), h('td', { class: 'small' }, n.body)))),
+          h('thead', {}, h('tr', {}, ['When', 'To', 'How', 'Subject', 'Message', 'Result'].map((t) => h('th', {}, t)))),
+          h('tbody', {}, d.notifications.map((n) => h('tr', {}, h('td', {}, fmtDateTime(n.at)), h('td', {}, n.to), h('td', {}, { push: 'Phone alert', sms: 'Text', dashboard: 'Dashboard only' }[n.channel] || n.channel), h('td', {}, n.subject), h('td', { class: 'small' }, n.body), h('td', { class: 'small' }, n.status || '')))),
         ))
       : h('p', { class: 'muted' }, 'No messages yet.'),
   );
@@ -407,6 +512,7 @@ async function start() {
   tabsEl.classList.remove('hidden');
   document.getElementById('signout').classList.remove('hidden');
   await loadUsers().catch(() => {});
+  refreshPushCard();
   await poll();
   clearInterval(ui.pollTimer);
   ui.pollTimer = setInterval(poll, 5000);
