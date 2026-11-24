@@ -34,7 +34,7 @@ It is a web app, so it works on any phone (iPhone or Android) through the browse
 ### Weekly wellbeing check
 Once a week, when an engineer opens the app (before starting a shift), they're asked two quick questions: how they're feeling and how tired they are. They can also tick "I'd like a chat with someone" and add a comment. It's optional, and they can tap **Skip this week**.
 
-If someone answers "Low" or worse to either question, or asks for a chat, office staff with alerts turned on get a notification. The notification doesn't include the answers. The **Wellbeing** tab shows who needs a follow-up, and a quick view of each engineer's recent weeks. Once you've spoken to them, press **Mark as followed up**.
+If someone answers "Low" or worse to either question, asks for a chat, or leaves a comment, office staff with alerts turned on get a notification. The notification doesn't include the answers. The **Wellbeing** tab shows who needs a follow-up, and a quick view of each engineer's recent weeks. Each follow-up card shows a response level (Amber: same day, Yellow: next working day, Green: read and note) and what to do, following the wellbeing response procedure, including a fatigue stand-down check for anyone "Exhausted". Skipped weeks show as "Skipped", and anyone who skips 3 weeks in a row is highlighted. Once you've spoken to them, press **Mark as followed up**.
 
 ### What happens when someone misses a check-in
 | Time | What happens |

@@ -436,8 +436,43 @@ async function renderContacts() {
 const MOOD_TEXT = { 1: 'Very low', 2: 'Low', 3: 'OK', 4: 'Good', 5: 'Great' };
 const ENERGY_TEXT = { 1: 'Exhausted', 2: 'Very tired', 3: 'A bit tired', 4: 'Fine', 5: 'Full of energy' };
 
+// Matches the wellbeing response procedure document.
+const LEVEL_INFO = {
+  amber: { label: 'Amber: same day', steps: ['Line manager phones them today (cover: wellbeing lead). If they are due to start work or drive sooner, call before that.', 'Listen first. Ask what is making things hard, at work and outside it, and agree one next step.', 'If you have any worry about their safety, ask directly whether they are thinking of harming themselves.'] },
+  yellow: { label: 'Yellow: next working day', steps: ['Line manager speaks to them within 1 working day, by phone or in person.', 'Ask what is behind it, using the HSE headings: workload, control, support, relationships, role, change. Agree any practical change.', 'Check back in 1 to 2 weeks.'] },
+  green: { label: 'Green: read and note', steps: ['No call needed unless the comment asks for something. Read it and reply if useful.'] },
+};
+const FATIGUE_STEPS = {
+  'stand-down': 'Fatigue stand-down check: speak to them before their next shift or work drive. If they have had under 5 hours\u2019 sleep in 24, don\u2019t feel safe, or you are not sure, stand them down from lone working and driving until rested, on full pay.',
+  check: 'Fatigue check: ask about sleep and whether they feel safe to drive and work alone. Reduce risk this week: fewer or nearer jobs, no extra hours or call-outs, regular breaks.',
+};
+const URGENT_TEXT = 'If anything suggests a risk of harm, act now: call them; 999 if they are in danger; otherwise help them contact Samaritans (116 123), Shout (text 85258) or NHS 111. Tell the wellbeing lead.';
+
+function wellbeingGuidance(e) {
+  const info = LEVEL_INFO[e.level] || LEVEL_INFO.yellow;
+  // The direct safety question is for low mood, not tiredness alone.
+  const steps = info.steps.filter((t) => e.mood <= 2 || !t.startsWith('If you have any worry'));
+  if (e.fatigue && FATIGUE_STEPS[e.fatigue]) steps.splice(1, 0, FATIGUE_STEPS[e.fatigue]);
+  if (e.wantsChat) steps.push('They asked for a chat: ask who they would like to talk to and when. Only mark as followed up once the chat has happened.');
+  return h('details', { class: 'wb-guide', open: true },
+    h('summary', {}, 'What to do'),
+    h('ul', {}, steps.map((t) => h('li', {}, t))),
+    e.comment ? h('p', { class: 'wb-urgent' }, URGENT_TEXT) : null,
+    h('p', { class: 'muted small' }, 'Note when you spoke, what was agreed and the next contact. No medical details.'),
+  );
+}
+
 function scoreCell(v, labels) {
   return h('span', { class: v <= 2 ? 'warn-text' : '' }, labels[v] || '-');
+}
+
+function thisWeekCell(p) {
+  if (p.thisWeek === 'due' || (p.thisWeek === undefined && p.overdue)) return h('span', { class: 'muted' }, 'Due');
+  if (p.thisWeek === 'skipped') {
+    const txt = p.skipStreak > 1 ? `Skipped (${p.skipStreak} in a row)` : 'Skipped';
+    return h('span', { class: p.skipStreak >= 3 ? 'warn-text' : 'muted' }, txt);
+  }
+  return 'Answered';
 }
 
 async function renderWellbeing() {
@@ -454,11 +489,17 @@ async function renderWellbeing() {
           try { await api('POST', `/api/wellbeing/${e.id}/followup`, { note: input.value }); toast('Saved.', 'good'); renderWellbeing(); } catch (ex) { toast(ex.message, 'bad'); }
         });
         const phone = (ui.users || []).find((u) => u.id === e.userId)?.phone;
-        return h('article', { class: 'wb-card' },
-          h('div', { class: 'alert-head' }, h('strong', {}, e.workerName + (e.wantsChat ? ' would like a chat' : ' may need some support')), h('span', { class: 'muted' }, fmtDateTime(e.at))),
+        const low = e.mood <= 2 || e.energy <= 2;
+        const what = e.wantsChat ? ' would like a chat' : low ? ' may need some support' : ' left a comment';
+        const level = LEVEL_INFO[e.level] ? e.level : 'yellow';
+        return h('article', { class: 'wb-card wb-level-' + level },
+          h('div', { class: 'alert-head' }, h('strong', {}, e.workerName + what), h('span', { class: 'muted' }, fmtDateTime(e.at))),
+          h('p', {}, h('span', { class: 'wb-badge wb-badge-' + level }, LEVEL_INFO[level].label)),
           h('p', {}, 'Feeling: ', scoreCell(e.mood, MOOD_TEXT), ' \u00b7 Tiredness: ', scoreCell(e.energy, ENERGY_TEXT)),
+          (e.reasons || []).length ? h('p', { class: 'muted small' }, e.reasons.join(' \u00b7 ')) : null,
           e.comment ? h('p', {}, '\u201c' + e.comment + '\u201d') : null,
           phone ? h('p', {}, 'Call: ', h('a', { href: 'tel:' + phone }, phone)) : null,
+          wellbeingGuidance(e),
           form,
         );
       }))
@@ -472,13 +513,22 @@ async function renderWellbeing() {
     h('td', {}, p.recent.length
       ? h('span', { class: 'wb-dots', title: 'Feeling over recent weeks, oldest first' }, p.recent.map((r) => h('span', { class: 'wb-dot wb-' + r.mood, title: `${fmtDateTime(r.at)}: ${MOOD_TEXT[r.mood]}` })))
       : h('span', { class: 'muted' }, '-')),
-    h('td', {}, p.overdue ? h('span', { class: 'muted' }, 'Due') : 'Done'),
+    h('td', {}, thisWeekCell(p)),
   ));
+
+  const quiet = d.people.filter((p) => p.skipStreak >= 3 || (p.daysSinceAnswer !== null && p.daysSinceAnswer > 14 && p.skipStreak >= 2));
+  const skipNote = quiet.length
+    ? h('div', { class: 'wb-card wb-level-yellow' },
+        h('strong', {}, 'Skipping the check-in'),
+        h('p', {}, quiet.map((p) => `${p.name} (${p.skipStreak} weeks in a row)`).join(', ')),
+        h('p', { class: 'small' }, 'Skipping is allowed and is never a disciplinary matter. Line manager: make a light, general check-in within the week, without mentioning the app ("Just checking in, how are things?"). If the skipping started after a low answer or a change at work, treat it as Yellow. If most of the team skips, ask the team why.'))
+    : null;
 
   setScreen(
     h('h2', {}, 'Needs a follow-up'),
     follow,
     h('h2', {}, 'Engineers'),
+    skipNote,
     h('div', { class: 'table-wrap' }, h('table', {},
       h('thead', {}, h('tr', {}, ['Engineer', 'Last check-in', 'Feeling', 'Tiredness', 'Recent weeks', 'This week'].map((t) => h('th', {}, t)))),
       h('tbody', {}, rows),

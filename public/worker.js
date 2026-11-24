@@ -197,9 +197,11 @@ function wellbeingCard() {
     const fd = new FormData(form);
     try {
       const r = await api('POST', '/api/wellbeing', { mood: Number(fd.get('mood')), energy: Number(fd.get('energy')), wantsChat: fd.get('wantsChat') === 'on', comment: fd.get('comment') });
-      form.replaceChildren(h('p', {}, r.flagged
+      form.replaceChildren(h('p', {}, r.needsContact
         ? 'Thank you. Someone from the office will be in touch. If you need to talk to someone right now, call the office or Samaritans on 116 123 (free, any time).'
-        : 'Thank you for checking in. See you next week.'));
+        : r.flagged
+          ? 'Thank you. The office will read your comment. If you need to talk to someone right now, call the office or Samaritans on 116 123 (free, any time).'
+          : 'Thank you for checking in. See you next week.'));
     } catch (ex) { err.textContent = ex.message; }
   });
   return form;

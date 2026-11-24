@@ -176,7 +176,9 @@ function createApp({ dataFile, log = console.log, pushSend } = {}) {
     ['POST', '/api/wellbeing', ({ user, body }) => {
       requireRole(user, 'worker');
       const entry = wellbeing.submit(user, body);
-      return { ok: true, flagged: entry ? entry.flagged : false };
+      if (!entry) return { ok: true, flagged: false };
+      const needsContact = entry.wantsChat || entry.mood <= 2 || entry.energy <= 2;
+      return { ok: true, flagged: entry.flagged, level: entry.level, needsContact };
     }],
 
     ['GET', '/api/wellbeing', ({ user }) => {
