@@ -9,7 +9,6 @@ const { Store } = require('./lib/store');
 const { createNotifier } = require('./lib/notify');
 const { createPush } = require('./lib/push');
 const { createSafety, SafetyError } = require('./lib/safety');
-const { createWellbeing } = require('./lib/wellbeing');
 const auth = require('./lib/auth');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -29,7 +28,6 @@ function createApp({ dataFile, log = console.log, pushSend } = {}) {
   const push = createPush(store, { log, ...(pushSend ? { send: pushSend } : {}) });
   const notify = createNotifier(store, { log, push });
   const safety = createSafety(store, notify);
-  const wellbeing = createWellbeing(store, notify);
 
   function send(res, status, body) {
     const json = JSON.stringify(body);
@@ -167,30 +165,6 @@ function createApp({ dataFile, log = console.log, pushSend } = {}) {
       return { sent };
     }],
 
-    // ---- wellbeing ----
-    ['GET', '/api/wellbeing/status', ({ user }) => {
-      requireRole(user, 'worker');
-      return wellbeing.status(user);
-    }],
-
-    ['POST', '/api/wellbeing', ({ user, body }) => {
-      requireRole(user, 'worker');
-      const entry = wellbeing.submit(user, body);
-      if (!entry) return { ok: true, flagged: false };
-      const needsContact = entry.wantsChat || entry.mood <= 2 || entry.energy <= 2;
-      return { ok: true, flagged: entry.flagged, level: entry.level, needsContact };
-    }],
-
-    ['GET', '/api/wellbeing', ({ user }) => {
-      requireRole(user, 'manager');
-      return wellbeing.overview();
-    }],
-
-    ['POST', '/api/wellbeing/:id/followup', ({ user, body, params }) => {
-      requireRole(user, 'manager');
-      return { entry: wellbeing.followUp(user, params.id, body.note) };
-    }],
-
     // ---- worker ----
     ['POST', '/api/consent', ({ user }) => {
       requireRole(user, 'worker');
@@ -287,7 +261,6 @@ function createApp({ dataFile, log = console.log, pushSend } = {}) {
         shifts: store.db.shifts.filter((s) => s.userId === target.id),
         events: store.db.events.filter((e) => e.userId === target.id),
         alerts: store.db.alerts.filter((a) => a.userId === target.id),
-        wellbeing: store.db.wellbeing.filter((e) => e.userId === target.id),
       };
     }],
 
@@ -300,7 +273,6 @@ function createApp({ dataFile, log = console.log, pushSend } = {}) {
       store.db.shifts = store.db.shifts.filter((s) => s.userId !== target.id);
       store.db.events = store.db.events.filter((e) => e.userId !== target.id);
       store.db.alerts = store.db.alerts.filter((a) => a.userId !== target.id);
-      store.db.wellbeing = store.db.wellbeing.filter((e) => e.userId !== target.id);
       store.db.users = store.db.users.filter((u) => u.id !== target.id);
       store.save();
       return { ok: true };
@@ -348,8 +320,6 @@ function createApp({ dataFile, log = console.log, pushSend } = {}) {
       s.graceMin = num(body.graceMin, 1, 60, s.graceMin);
       s.escalateAfterMin = num(body.escalateAfterMin, 1, 120, s.escalateAfterMin);
       s.retentionDays = num(body.retentionDays, 1, 365, s.retentionDays);
-      s.wellbeingRetentionDays = num(body.wellbeingRetentionDays, 7, 365, s.wellbeingRetentionDays);
-      if (body.wellbeingEnabled !== undefined) s.wellbeingEnabled = body.wellbeingEnabled === true || body.wellbeingEnabled === 'on' || body.wellbeingEnabled === 'true';
       store.save();
       return { settings: s };
     }],
@@ -421,10 +391,9 @@ function createApp({ dataFile, log = console.log, pushSend } = {}) {
   let purgeTimer = null;
   function startBackground() {
     tickTimer = setInterval(() => safety.tick(), 15 * 1000);
-    purgeTimer = setInterval(() => { safety.purgeOldData(); wellbeing.purge(); }, 60 * 60 * 1000);
+    purgeTimer = setInterval(() => safety.purgeOldData(), 60 * 60 * 1000);
     safety.tick();
     safety.purgeOldData();
-    wellbeing.purge();
   }
   function stopBackground() {
     clearInterval(tickTimer);
@@ -432,7 +401,7 @@ function createApp({ dataFile, log = console.log, pushSend } = {}) {
     store.flush();
   }
 
-  return { server, store, safety, wellbeing, startBackground, stopBackground };
+  return { server, store, safety, startBackground, stopBackground };
 }
 
 if (require.main === module) {

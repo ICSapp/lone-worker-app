@@ -216,86 +216,22 @@ test('a device that has gone away is forgotten', async () => {
   assert.equal(user.pushSubs.length, 0);
 });
 
-test('weekly wellbeing check: due, flags low scores, follow-up, retention, privacy in push', async () => {
-  await withServer(async ({ app, call }) => {
-    const { mt, wt } = await setup(call);
-    let st = await call('GET', '/api/wellbeing/status', null, wt);
-    assert.equal(st.body.due, true);
-
-    const bad = await call('POST', '/api/wellbeing', { mood: 9, energy: 3 }, wt);
-    assert.equal(bad.status, 400);
-
-    const ok = await call('POST', '/api/wellbeing', { mood: 4, energy: 4 }, wt);
-    assert.equal(ok.body.flagged, false);
-    st = await call('GET', '/api/wellbeing/status', null, wt);
-    assert.equal(st.body.due, false, 'not asked again this week');
-
-    const low = await call('POST', '/api/wellbeing', { mood: 2, energy: 3, wantsChat: true, comment: 'rough week' }, wt);
-    assert.equal(low.body.flagged, true);
-    const n = app.store.db.notifications.find((x) => x.subject === 'Wellbeing check-in');
-    assert.ok(n, 'office told');
-    assert.ok(!n.body.includes('rough week'), 'comment not put in notification');
-
-    const forbidden = await call('GET', '/api/wellbeing', null, wt);
-    assert.equal(forbidden.status, 403, 'engineers cannot see others');
-
-    const ov = await call('GET', '/api/wellbeing', null, mt);
-    assert.equal(ov.body.needsFollowUp.length, 1);
-    assert.equal(ov.body.people[0].recent.length, 2);
-    await call('POST', `/api/wellbeing/${ov.body.needsFollowUp[0].id}/followup`, { note: 'Had a chat' }, mt);
-    const ov2 = await call('GET', '/api/wellbeing', null, mt);
-    assert.equal(ov2.body.needsFollowUp.length, 0);
-
-    const removed = app.wellbeing.purge(Date.now() + 91 * 24 * 60 * MIN);
-    assert.equal(removed, 2);
-  });
-});
-
-test('wellbeing can be skipped and switched off', async () => {
-  await withServer(async ({ call }) => {
-    const { mt, wt } = await setup(call);
-    await call('POST', '/api/wellbeing', { skip: true }, wt);
-    let st = await call('GET', '/api/wellbeing/status', null, wt);
-    assert.equal(st.body.due, false);
-    await call('PUT', '/api/settings', { wellbeingEnabled: false }, mt);
-    st = await call('GET', '/api/wellbeing/status', null, wt);
-    assert.equal(st.body.enabled, false);
-  });
-});
-
-test('wellbeing guidance levels follow the response procedure', () => {
-  const { assess } = require('../lib/wellbeing');
-  assert.equal(assess({ mood: 1, energy: 4 }).level, 'amber');
-  assert.equal(assess({ mood: 2, energy: 4 }).level, 'yellow');
-  assert.equal(assess({ mood: 2, energy: 2 }).level, 'amber');
-  assert.equal(assess({ mood: 5, energy: 1 }).level, 'amber');
-  assert.equal(assess({ mood: 5, energy: 1 }).fatigue, 'stand-down');
-  assert.equal(assess({ mood: 4, energy: 2 }).level, 'yellow');
-  assert.equal(assess({ mood: 4, energy: 2 }).fatigue, 'check');
-  assert.equal(assess({ mood: 3, energy: 3 }).level, 'green');
-  assert.equal(assess({ mood: 4, energy: 4, wantsChat: true }).level, 'yellow');
-  assert.equal(assess({ mood: 2, energy: 4, wantsChat: true }).level, 'amber');
-  assert.equal(assess({ mood: 2, energy: 4 }, { mood: 2, energy: 4 }).level, 'amber', 'low two weeks running goes up');
-  assert.equal(assess({ mood: 3, energy: 4 }, { mood: 5, energy: 4 }).level, 'yellow', 'big drop goes up');
-});
-
-test('wellbeing: comment with good scores reaches the office, skips are shown', async () => {
-  await withServer(async ({ app, call }) => {
-    const { mt, wt } = await setup(call);
-    await call('POST', '/api/wellbeing', { skip: true }, wt);
-    let ov = await call('GET', '/api/wellbeing', null, mt);
-    assert.equal(ov.body.people[0].thisWeek, 'skipped');
-    assert.equal(ov.body.people[0].skipStreak, 1);
-
-    const r = await call('POST', '/api/wellbeing', { mood: 4, energy: 4, comment: 'Site in Leeds has no welfare facilities' }, wt);
-    assert.equal(r.body.flagged, true);
-    assert.equal(r.body.level, 'green');
-    const n = app.store.db.notifications.find((x) => x.subject === 'Wellbeing check-in');
-    assert.ok(n.body.includes('left a comment'));
-    assert.ok(!n.body.includes('Leeds'), 'comment kept out of the notification');
-    ov = await call('GET', '/api/wellbeing', null, mt);
-    assert.equal(ov.body.needsFollowUp.length, 1);
-    assert.equal(ov.body.people[0].thisWeek, 'answered');
-    assert.equal(ov.body.people[0].skipStreak, 0);
-  });
+test('old wellbeing answers are deleted from an existing data file', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { Store } = require('../lib/store');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lws-')), 'data.json');
+  fs.writeFileSync(file, JSON.stringify({
+    users: [{ id: 'u1', name: 'Ed', wellbeingSkippedAt: '2026-11-01T00:00:00Z', wellbeingSkipStreak: 2 }],
+    wellbeing: [{ id: 'w1', userId: 'u1', mood: 1, energy: 1, comment: 'private' }],
+    notifications: [{ subject: 'Wellbeing check-in', body: 'Ed may need some support.' }, { subject: 'SOS', body: 'x' }],
+    settings: { wellbeingEnabled: true, wellbeingRetentionDays: 90, retentionDays: 30 },
+  }));
+  const store = new Store(file);
+  const saved = fs.readFileSync(file, 'utf8');
+  assert.ok(!saved.includes('wellbeing') && !saved.includes('Wellbeing'), 'nothing left on disk');
+  assert.ok(!saved.includes('private'));
+  assert.equal(store.db.notifications.length, 1);
+  assert.equal(store.db.settings.retentionDays, 30);
 });

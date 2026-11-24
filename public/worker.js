@@ -157,63 +157,6 @@ function renderConsent() {
   setScreen(box);
 }
 
-// ------------------------------------------------------ wellbeing check-in
-
-const MOOD = [[1, '\u{1F61E}', 'Very low'], [2, '\u{1F641}', 'Low'], [3, '\u{1F610}', 'OK'], [4, '\u{1F642}', 'Good'], [5, '\u{1F604}', 'Great']];
-const ENERGY = [[1, '\u{1F635}', 'Exhausted'], [2, '\u{1F62B}', 'Very tired'], [3, '\u{1F971}', 'A bit tired'], [4, '\u{1F642}', 'Fine'], [5, '\u{26A1}', 'Full of energy']];
-
-function scaleField(name, legend, options) {
-  return h('fieldset', { class: 'scale' },
-    h('legend', {}, legend),
-    h('div', { class: 'scale-row' }, options.map(([v, icon, text]) => h('label', { class: 'scale-opt' },
-      h('input', { type: 'radio', name, value: v, required: true }),
-      h('span', { class: 'scale-icon', 'aria-hidden': 'true' }, icon),
-      h('span', { class: 'scale-text' }, text),
-    ))),
-  );
-}
-
-function wellbeingCard() {
-  const err = h('p', { class: 'error', role: 'alert' });
-  const form = h('form', { class: 'card stack wellbeing' },
-    h('h2', {}, 'Weekly wellbeing check'),
-    h('p', { class: 'muted small' }, 'Optional and takes 30 seconds. Working alone can be tough, and this helps the office know if you need support. Only managers see your answers, and they are deleted after a few months.'),
-    scaleField('mood', 'How are you feeling this week?', MOOD),
-    scaleField('energy', 'How tired are you?', ENERGY),
-    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'wantsChat' }), 'I\u2019d like a chat with someone'),
-    h('label', {}, 'Anything you\u2019d like to add? (optional)', h('textarea', { name: 'comment', rows: 2, maxlength: 500 })),
-    err,
-    h('div', { class: 'row-buttons' },
-      h('button', { class: 'btn primary', type: 'submit' }, 'Send'),
-      h('button', { class: 'btn ghost', type: 'button', onclick: async () => {
-        await api('POST', '/api/wellbeing', { skip: true }).catch(() => {});
-        form.remove();
-      } }, 'Skip this week'),
-    ),
-  );
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    err.textContent = '';
-    const fd = new FormData(form);
-    try {
-      const r = await api('POST', '/api/wellbeing', { mood: Number(fd.get('mood')), energy: Number(fd.get('energy')), wantsChat: fd.get('wantsChat') === 'on', comment: fd.get('comment') });
-      form.replaceChildren(h('p', {}, r.needsContact
-        ? 'Thank you. Someone from the office will be in touch. If you need to talk to someone right now, call the office or Samaritans on 116 123 (free, any time).'
-        : r.flagged
-          ? 'Thank you. The office will read your comment. If you need to talk to someone right now, call the office or Samaritans on 116 123 (free, any time).'
-          : 'Thank you for checking in. See you next week.'));
-    } catch (ex) { err.textContent = ex.message; }
-  });
-  return form;
-}
-
-async function maybeShowWellbeing() {
-  try {
-    const st = await api('GET', '/api/wellbeing/status');
-    if (st.due && !state.shift && !document.querySelector('.wellbeing')) app.append(wellbeingCard());
-  } catch { /* not important */ }
-}
-
 function renderStart() {
   stopLocation();
   const select = h('select', { name: 'intervalMin' },
@@ -251,7 +194,6 @@ function renderStart() {
     }
   });
   setScreen(form);
-  maybeShowWellbeing();
 }
 
 function renderShift() {
