@@ -31,6 +31,11 @@ It is a web app, so it works on any phone (iPhone or Android) through the browse
 5. **Live** tab: keep this open in the office. It refreshes itself and beeps when a new alert arrives.
 6. When an alert comes in, phone the engineer, then type what you did and press **Mark as dealt with**.
 
+### Weekly wellbeing check
+Once a week, when an engineer opens the app (before starting a shift), they're asked two quick questions: how they're feeling and how tired they are. They can also tick "I'd like a chat with someone" and add a comment. It's optional, and they can tap **Skip this week**.
+
+If someone answers "Low" or worse to either question, or asks for a chat, office staff with alerts turned on get a notification. The notification doesn't include the answers. The **Wellbeing** tab shows who needs a follow-up, and a quick view of each engineer's recent weeks. Once you've spoken to them, press **Mark as followed up**.
+
 ### What happens when someone misses a check-in
 | Time | What happens |
 |---|---|
@@ -60,12 +65,14 @@ Tracking employees' location is personal data, so the app has been built with UK
 - **Only during shifts.** Location is collected only while a shift is running, and stops when it ends.
 - **Told up front.** Engineers see a privacy notice and must accept it before their first shift.
 - **Automatic deletion.** Location history is deleted after **30 days** by default (change in Settings).
+- **Wellbeing answers are health data** (a "special category" under UK GDPR). They're optional, only dashboard users can see them, phone notifications never show the answers, and they're deleted after **90 days** by default (change in Settings, or switch the feature off).
 - **Access and deletion.** On the *Engineers & staff* tab you can **Download data** for any person (a subject access request), and **Erase all their data** after they leave.
 - **Secure sign-in.** PINs and passwords are stored scrambled (hashed), and repeated wrong guesses lock the account for 5 minutes.
 
 **Things you should do as the employer** (the app can't do these for you):
 - Write a short **privacy notice** for lone working and give it to staff. Lawful basis is usually *legal obligation* (Health and Safety at Work Act / Management of Health and Safety at Work Regulations require you to manage lone-working risks) and/or *legitimate interests*.
-- Carry out a **Data Protection Impact Assessment (DPIA)**. The ICO recommends one for location tracking of employees. The ICO website has a free template.
+- Mention the wellbeing check in your privacy notice: it's voluntary, why you ask, who sees it and how long it's kept. Only give dashboard logins to people who should see it.
+- Carry out a **Data Protection Impact Assessment (DPIA)**, covering both location tracking and the wellbeing check. The ICO recommends one for location tracking of employees. The ICO website has a free template.
 - Make sure your company is **registered with the ICO** (most businesses pay a small annual data protection fee).
 - If you use Twilio or a hosting company, they are your **data processors**; check they offer a UK/EU data processing agreement.
 - Keep the retention period as short as you genuinely need.
@@ -94,6 +101,7 @@ Layout:
 - `server.js` – web server and API
 - `lib/safety.js` – shift, check-in, SOS, missed check-in and escalation rules
 - `lib/notify.js` – sending alerts (phone notifications; SMS is stubbed, plug it in here)
+- `lib/wellbeing.js` – weekly wellbeing check-ins
 - `lib/push.js` – phone/tablet notifications (web push; keys are created automatically)
 - `lib/auth.js` – sign-in, PIN/password hashing
 - `lib/store.js` – simple JSON file storage (move to a real database as you grow)

@@ -158,3 +158,26 @@ td.actions { display: flex; gap: .35rem; flex-wrap: wrap; }
 .push-card.on { background: var(--ok-bg); }
 .push-card.off { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .push-actions { display: flex; gap: .4rem; }
+
+/* ---- wellbeing ---- */
+.wellbeing h2 { margin: 0; }
+.scale { border: 0; padding: 0; margin: 0; }
+.scale legend { font-weight: 600; margin-bottom: .4rem; }
+.scale-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: .35rem; }
+.scale-opt { position: relative; display: flex; flex-direction: column; align-items: center; gap: .15rem; padding: .5rem .2rem; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; font-weight: 500; text-align: center; }
+.scale-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.scale-opt:has(input:checked) { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.scale-opt:has(input:focus-visible) { outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent); }
+.scale-icon { font-size: 1.6rem; line-height: 1; }
+.scale-text { font-size: .72rem; line-height: 1.15; }
+.check { flex-direction: row; align-items: center; gap: .5rem; }
+.check input { width: auto; width: 1.2rem; height: 1.2rem; }
+textarea { font: inherit; padding: .6rem .8rem; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); width: 100%; resize: vertical; }
+.row-buttons { display: flex; gap: .5rem; flex-wrap: wrap; }
+.wb-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
+.wb-dot { width: 12px; height: 12px; border-radius: 3px; }
+.wb-1, .wb-2 { background: var(--bad); }
+.wb-3 { background: var(--warn); }
+.wb-4, .wb-5 { background: var(--go); }
+.wb-card { border-radius: var(--radius); padding: 1rem; background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
+.wb-card p { margin: .35rem 0; }

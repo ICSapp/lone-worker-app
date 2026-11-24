@@ -1,7 +1,7 @@
 // Service worker: lets the app be "installed" on a phone home screen and
 // load its screens quickly. Safety data (check-ins, SOS) always goes live to
 // the server and is never cached.
-const CACHE = 'lws-v2';
+const CACHE = 'lws-v3';
 const SHELL = ['/', '/index.html', '/manager.html', '/styles.css', '/common.js', '/worker.js', '/manager.js', '/icon.svg', '/manifest.webmanifest', '/manager.webmanifest'];
 
 self.addEventListener('install', (e) => {

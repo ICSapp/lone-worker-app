@@ -215,3 +215,50 @@ test('a device that has gone away is forgotten', async () => {
   assert.equal(n, 0);
   assert.equal(user.pushSubs.length, 0);
 });
+
+test('weekly wellbeing check: due, flags low scores, follow-up, retention, privacy in push', async () => {
+  await withServer(async ({ app, call }) => {
+    const { mt, wt } = await setup(call);
+    let st = await call('GET', '/api/wellbeing/status', null, wt);
+    assert.equal(st.body.due, true);
+
+    const bad = await call('POST', '/api/wellbeing', { mood: 9, energy: 3 }, wt);
+    assert.equal(bad.status, 400);
+
+    const ok = await call('POST', '/api/wellbeing', { mood: 4, energy: 4 }, wt);
+    assert.equal(ok.body.flagged, false);
+    st = await call('GET', '/api/wellbeing/status', null, wt);
+    assert.equal(st.body.due, false, 'not asked again this week');
+
+    const low = await call('POST', '/api/wellbeing', { mood: 2, energy: 3, wantsChat: true, comment: 'rough week' }, wt);
+    assert.equal(low.body.flagged, true);
+    const n = app.store.db.notifications.find((x) => x.subject === 'Wellbeing check-in');
+    assert.ok(n, 'office told');
+    assert.ok(!n.body.includes('rough week'), 'comment not put in notification');
+
+    const forbidden = await call('GET', '/api/wellbeing', null, wt);
+    assert.equal(forbidden.status, 403, 'engineers cannot see others');
+
+    const ov = await call('GET', '/api/wellbeing', null, mt);
+    assert.equal(ov.body.needsFollowUp.length, 1);
+    assert.equal(ov.body.people[0].recent.length, 2);
+    await call('POST', `/api/wellbeing/${ov.body.needsFollowUp[0].id}/followup`, { note: 'Had a chat' }, mt);
+    const ov2 = await call('GET', '/api/wellbeing', null, mt);
+    assert.equal(ov2.body.needsFollowUp.length, 0);
+
+    const removed = app.wellbeing.purge(Date.now() + 91 * 24 * 60 * MIN);
+    assert.equal(removed, 2);
+  });
+});
+
+test('wellbeing can be skipped and switched off', async () => {
+  await withServer(async ({ call }) => {
+    const { mt, wt } = await setup(call);
+    await call('POST', '/api/wellbeing', { skip: true }, wt);
+    let st = await call('GET', '/api/wellbeing/status', null, wt);
+    assert.equal(st.body.due, false);
+    await call('PUT', '/api/settings', { wellbeingEnabled: false }, mt);
+    st = await call('GET', '/api/wellbeing/status', null, wt);
+    assert.equal(st.body.enabled, false);
+  });
+});

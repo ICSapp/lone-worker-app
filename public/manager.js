@@ -431,6 +431,62 @@ async function renderContacts() {
   );
 }
 
+// ---------------------------------------------------------------- wellbeing
+
+const MOOD_TEXT = { 1: 'Very low', 2: 'Low', 3: 'OK', 4: 'Good', 5: 'Great' };
+const ENERGY_TEXT = { 1: 'Exhausted', 2: 'Very tired', 3: 'A bit tired', 4: 'Fine', 5: 'Full of energy' };
+
+function scoreCell(v, labels) {
+  return h('span', { class: v <= 2 ? 'warn-text' : '' }, labels[v] || '-');
+}
+
+async function renderWellbeing() {
+  const d = await api('GET', '/api/wellbeing');
+  if (!d.enabled) {
+    return setScreen(h('h2', {}, 'Wellbeing'), h('p', {}, 'Weekly wellbeing check-ins are switched off. You can switch them on in Settings.'));
+  }
+  const follow = d.needsFollowUp.length
+    ? h('section', { class: 'stack' }, d.needsFollowUp.map((e) => {
+        const input = h('input', { placeholder: 'What did you do? e.g. Had a chat, all OK', maxlength: 500 });
+        const form = h('form', { class: 'ack' }, input, h('button', { class: 'btn primary', type: 'submit' }, 'Mark as followed up'));
+        form.addEventListener('submit', async (ev) => {
+          ev.preventDefault();
+          try { await api('POST', `/api/wellbeing/${e.id}/followup`, { note: input.value }); toast('Saved.', 'good'); renderWellbeing(); } catch (ex) { toast(ex.message, 'bad'); }
+        });
+        const phone = (ui.users || []).find((u) => u.id === e.userId)?.phone;
+        return h('article', { class: 'wb-card' },
+          h('div', { class: 'alert-head' }, h('strong', {}, e.workerName + (e.wantsChat ? ' would like a chat' : ' may need some support')), h('span', { class: 'muted' }, fmtDateTime(e.at))),
+          h('p', {}, 'Feeling: ', scoreCell(e.mood, MOOD_TEXT), ' \u00b7 Tiredness: ', scoreCell(e.energy, ENERGY_TEXT)),
+          e.comment ? h('p', {}, '\u201c' + e.comment + '\u201d') : null,
+          phone ? h('p', {}, 'Call: ', h('a', { href: 'tel:' + phone }, phone)) : null,
+          form,
+        );
+      }))
+    : h('p', { class: 'allclear' }, 'Nobody needs a follow-up right now.');
+
+  const rows = d.people.map((p) => h('tr', {},
+    h('td', {}, h('strong', {}, p.name)),
+    h('td', {}, p.latest ? fmtDateTime(p.latest.at) : h('span', { class: 'muted' }, 'Never')),
+    h('td', {}, p.latest ? scoreCell(p.latest.mood, MOOD_TEXT) : '-'),
+    h('td', {}, p.latest ? scoreCell(p.latest.energy, ENERGY_TEXT) : '-'),
+    h('td', {}, p.recent.length
+      ? h('span', { class: 'wb-dots', title: 'Feeling over recent weeks, oldest first' }, p.recent.map((r) => h('span', { class: 'wb-dot wb-' + r.mood, title: `${fmtDateTime(r.at)}: ${MOOD_TEXT[r.mood]}` })))
+      : h('span', { class: 'muted' }, '-')),
+    h('td', {}, p.overdue ? h('span', { class: 'muted' }, 'Due') : 'Done'),
+  ));
+
+  setScreen(
+    h('h2', {}, 'Needs a follow-up'),
+    follow,
+    h('h2', {}, 'Engineers'),
+    h('div', { class: 'table-wrap' }, h('table', {},
+      h('thead', {}, h('tr', {}, ['Engineer', 'Last check-in', 'Feeling', 'Tiredness', 'Recent weeks', 'This week'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, rows),
+    )),
+    h('p', { class: 'muted small' }, 'Engineers are asked once a week, on the app\u2019s start screen. Answering is optional. Answers are health information: only share them with people who need to know. They are deleted automatically (see Settings).'),
+  );
+}
+
 // ------------------------------------------------------------------ history
 
 const EVENT_TEXT = {
@@ -472,12 +528,14 @@ async function renderSettings() {
     h('label', {}, 'Grace period after a missed check-in (minutes)', h('input', { name: 'graceMin', type: 'number', min: 1, max: 60, value: s.graceMin })),
     h('label', {}, 'Escalate again if not dealt with after (minutes)', h('input', { name: 'escalateAfterMin', type: 'number', min: 1, max: 120, value: s.escalateAfterMin })),
     h('label', {}, 'Delete location history after (days)', h('input', { name: 'retentionDays', type: 'number', min: 1, max: 365, value: s.retentionDays })),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'wellbeingEnabled', checked: s.wellbeingEnabled }), 'Ask engineers a weekly wellbeing check'),
+    h('label', {}, 'Delete wellbeing answers after (days)', h('input', { name: 'wellbeingRetentionDays', type: 'number', min: 7, max: 365, value: s.wellbeingRetentionDays })),
     h('div', { class: 'full' }, msg, h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
   );
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
-      const r = await api('PUT', '/api/settings', Object.fromEntries(new FormData(form)));
+      const r = await api('PUT', '/api/settings', { ...Object.fromEntries(new FormData(form)), wellbeingEnabled: form.elements.wellbeingEnabled.checked });
       document.getElementById('org').textContent = r.settings.orgName;
       toast('Saved.', 'good');
     } catch (ex) { msg.textContent = ex.message; }
@@ -487,7 +545,7 @@ async function renderSettings() {
 
 // --------------------------------------------------------------------- tabs
 
-const RENDER = { live: renderLive, people: renderPeople, contacts: renderContacts, history: renderHistory, settings: renderSettings };
+const RENDER = { live: renderLive, people: renderPeople, contacts: renderContacts, wellbeing: renderWellbeing, history: renderHistory, settings: renderSettings };
 
 tabsEl.addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-tab]');
